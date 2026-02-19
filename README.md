@@ -377,12 +377,12 @@ curl -X POST http://localhost:8000/api/scan/async \
 
 ## 👥 Team — BUG SLAYERS
 
-| Member | Role |
-|--------|------|
-| **Atul Kumar** | Lead Developer & Architecture |
-| **Ashish Singh** | Backend & Security Research |
-| **Palak** | Frontend & UI/UX |
-| **Akshita Jha** | Testing & Documentation |
+| Member |
+|--------|
+| **Atul Kumar** |
+| **Ashish Singh**|
+| **Palak**|
+| **Akshita Jha**|
 
 ---
 
