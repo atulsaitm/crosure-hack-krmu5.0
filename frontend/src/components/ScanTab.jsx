@@ -5,7 +5,8 @@ import ScanControl from './ScanControl';
 import FindingsTable from './FindingsTable';
 import RemediationPanel from './RemediationPanel';
 import ScanProgress from './ScanProgress';
-import { Shield, Crosshair, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import ChainGraphSidebar from './ChainGraphSidebar';
+import { Shield, Crosshair, AlertTriangle, CheckCircle2, GitBranch } from 'lucide-react';
 
 export default function ScanTab() {
   const scanStatus = useStore((s) => s.scanStatus);
@@ -14,6 +15,9 @@ export default function ScanTab() {
   const scanMessage = useStore((s) => s.scanMessage);
   const scanError = useStore((s) => s.scanError);
   const endpointsCrawled = useStore((s) => s.endpointsCrawled);
+  const chains = useStore((s) => s.chains);
+  const graphSidebarOpen = useStore((s) => s.graphSidebarOpen);
+  const toggleGraphSidebar = useStore((s) => s.toggleGraphSidebar);
 
   return (
     <div className="flex flex-col h-full dot-pattern">
@@ -46,10 +50,12 @@ export default function ScanTab() {
         </div>
       )}
 
-      {/* Main content area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Findings Table */}
-        <div className={`${selectedFinding ? 'w-2/3' : 'w-full'} overflow-auto p-5`}>
+      {/* Main content area — independent scroll for each side */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
+        {/* Findings Table — scrolls independently */}
+        <div className={`${
+          selectedFinding ? 'w-2/3' : 'w-full'
+        } overflow-y-auto p-5 min-h-0 flex-shrink-0`}>
           {findings.length > 0 ? (
             <FindingsTable />
           ) : (scanStatus === 'complete' || scanStatus === 'error') ? (
@@ -75,13 +81,33 @@ export default function ScanTab() {
           ) : null}
         </div>
 
-        {/* Remediation Panel */}
+        {/* Detail / Remediation Panel — fixed right side, only content scrolls */}
         {selectedFinding && (
-          <div className="w-1/3 border-l border-white/[0.04] overflow-auto">
-            <RemediationPanel />
+          <div className="w-1/3 flex-shrink-0 border-l border-white/[0.04] flex flex-col min-h-0">
+            <div className="overflow-y-auto flex-1 min-h-0">
+              <RemediationPanel />
+            </div>
           </div>
         )}
       </div>
+
+      {/* Floating Attack Graph toggle button */}
+      {chains.length > 0 && (
+        <button
+          onClick={toggleGraphSidebar}
+          className={`fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-2.5 rounded-xl shadow-lg transition-all duration-300 ${
+            graphSidebarOpen
+              ? 'bg-accent-warm/20 border border-accent-warm/30 text-accent-warm'
+              : 'bg-[#141418]/90 border border-white/[0.08] text-white/60 hover:text-accent-warm hover:border-accent-warm/20'
+          } backdrop-blur-sm`}
+        >
+          <GitBranch className="w-4 h-4" />
+          <span className="text-xs font-medium">{chains.length} Chain{chains.length !== 1 ? 's' : ''}</span>
+        </button>
+      )}
+
+      {/* Attack Chain Graph Sidebar */}
+      <ChainGraphSidebar />
     </div>
   );
 }

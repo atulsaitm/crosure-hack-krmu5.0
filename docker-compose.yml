@@ -32,10 +32,14 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://crosure:crosure_secret@postgres:5432/crosure
       OLLAMA_URL: http://ollama:11434
       CHROMADB_PATH: /app/chromadb_data
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-qwen/qwen3-coder:free}
     volumes:
       - ./backend:/app
       - ./seed_data:/app/seed_data

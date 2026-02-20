@@ -1,19 +1,22 @@
-"""Ollama LLM client for remediation, triage, and exploit parsing."""
+"""Unified LLM client — OpenRouter (primary) → Ollama (fallback)."""
 
 import httpx
 import json
+import logging
 from typing import Optional
 from config import settings
 
+logger = logging.getLogger("crosure.llm")
 
-async def query_ollama(
+
+async def _query_ollama_direct(
     prompt: str,
     system: str = "",
     model: Optional[str] = None,
     temperature: float = 0.3,
     max_tokens: int = 1024,
 ) -> str:
-    """Query the Ollama API."""
+    """Query the local Ollama API."""
     model = model or settings.OLLAMA_MODEL
 
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -32,6 +35,47 @@ async def query_ollama(
         )
         response.raise_for_status()
         return response.json().get("response", "")
+
+
+async def query_llm(
+    prompt: str,
+    system: str = "",
+    model: Optional[str] = None,
+    temperature: float = 0.3,
+    max_tokens: int = 1024,
+) -> str:
+    """Unified LLM query: tries OpenRouter first, then Ollama."""
+    # ── Try OpenRouter (fast, cloud) ──
+    if settings.OPENROUTER_API_KEY:
+        try:
+            from llm.openrouter_client import query_openrouter
+            result = await query_openrouter(
+                prompt=prompt, system=system, model=model if model and "/" in model else None,
+                temperature=temperature, max_tokens=max_tokens,
+            )
+            if result:
+                logger.debug("[LLM] Served by OpenRouter")
+                return result
+        except Exception as e:
+            logger.warning(f"[LLM] OpenRouter failed, falling back to Ollama: {e}")
+
+    # ── Fallback to Ollama (local) ──
+    try:
+        result = await _query_ollama_direct(
+            prompt=prompt, system=system, model=model,
+            temperature=temperature, max_tokens=max_tokens,
+        )
+        if result:
+            logger.debug("[LLM] Served by Ollama")
+            return result
+    except Exception as e:
+        logger.warning(f"[LLM] Ollama failed: {e}")
+
+    return ""
+
+
+# ── Backward-compatible alias — all existing callers use this automatically ──
+query_ollama = query_llm
 
 
 REMEDIATION_SYSTEM = """You are a senior application security engineer. Given a vulnerability finding,
@@ -83,7 +127,7 @@ Attack Chain Context: {chain_context or 'Not part of a known chain'}
 
 Provide specific remediation steps."""
 
-    return await query_ollama(prompt, system=REMEDIATION_SYSTEM)
+    return await query_llm(prompt, system=REMEDIATION_SYSTEM)
 
 
 async def triage_finding(
@@ -100,7 +144,7 @@ Response evidence: {(evidence or '')[:2000]}
 Is this a true positive?"""
 
     try:
-        result = await query_ollama(prompt, system=TRIAGE_SYSTEM)
+        result = await query_llm(prompt, system=TRIAGE_SYSTEM)
         # Try to parse JSON from response
         import re
         json_match = re.search(r'\{.*\}', result, re.DOTALL)

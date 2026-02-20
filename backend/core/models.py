@@ -94,6 +94,10 @@ class Finding(BaseModel):
     remediation: Optional[str] = None
     chain_ids: List[str] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    # AI Triage fields
+    ai_confidence: Optional[float] = None
+    ai_verdict: Optional[str] = None  # true_positive | false_positive | needs_review
+    ai_reasoning: Optional[str] = None
 
 
 class VulnNode(BaseModel):

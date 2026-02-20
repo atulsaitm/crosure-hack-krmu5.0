@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     OLLAMA_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "dolphin-mistral"
 
+    # OpenRouter (free cloud LLM — get key at https://openrouter.ai)
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_MODEL: str = "qwen/qwen3-coder:free"
+
     # ChromaDB
     CHROMADB_PATH: str = "./chromadb_data"
 

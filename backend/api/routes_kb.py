@@ -178,10 +178,10 @@ async def create_chain(chain: ChainCreate):
     """Add a known attack chain to the knowledge base."""
     async with get_session() as session:
         db_chain = AttackChainDB(
-            name=chain.name,
-            description=chain.description,
+            title=chain.name,
+            description=chain.description or "",
             chain_type=chain.chain_type,
-            total_score=chain.total_score,
+            total_steps=len(chain.steps),
         )
         session.add(db_chain)
         await session.flush()
@@ -190,26 +190,24 @@ async def create_chain(chain: ChainCreate):
             db_step = ChainStep(
                 chain_id=db_chain.id,
                 step_order=idx + 1,
-                vuln_type=step.vuln_type,
+                step_type=step.vuln_type,
                 description=step.description,
-                primitive=step.primitive,
             )
             session.add(db_step)
 
         await session.commit()
         await session.refresh(db_chain)
 
-        # Embed
+        # Embed in vector store
         embed_chain(
-            chain_id=str(db_chain.id),
-            name=chain.name,
-            description=chain.description or "",
-            chain_type=chain.chain_type,
+            chain_id=db_chain.id,
+            text=f"{chain.name}. {chain.description or ''}. Steps: {', '.join(s.vuln_type for s in chain.steps)}",
+            metadata={"chain_type": chain.chain_type, "is_chain": True},
         )
 
         return ChainResponse(
             id=str(db_chain.id),
-            name=db_chain.name,
+            name=db_chain.title,
             description=db_chain.description,
             chain_type=db_chain.chain_type,
         )
@@ -229,7 +227,7 @@ async def list_chains(limit: int = 50, offset: int = 0):
         return [
             ChainResponse(
                 id=str(c.id),
-                name=c.name,
+                name=c.title,
                 description=c.description,
                 chain_type=c.chain_type,
             )

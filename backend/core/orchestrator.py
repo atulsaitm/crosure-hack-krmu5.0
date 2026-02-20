@@ -15,6 +15,17 @@ from crawler.playwright_crawler import PlaywrightCrawler
 from chains.graph_engine import ChainEngine
 from kb.embeddings import search_chains_for_findings
 from llm.ollama_client import get_remediation, triage_finding
+from llm.ai_guidance import (
+    compute_plugin_priorities,
+    sort_plugins_by_priority,
+    query_kb_for_tech,
+    boost_findings_from_kb,
+    ai_triage_batch,
+    apply_triage_to_findings,
+    generate_guidance_summary,
+    chain_based_fallback_triage,
+    check_ollama_available,
+)
 
 # Import all plugins
 from plugins.sqli import SQLiPlugin
@@ -87,10 +98,19 @@ class ScanOrchestrator:
 
             endpoints, nav_graph = await crawler.crawl()
             tech_stack = crawler.discovered_tech or []
+            framework = crawler.detected_framework
+
+            # ── AI Guidance: Compute plugin priorities from tech stack ──
+            plugin_priorities = compute_plugin_priorities(tech_stack, framework)
+            kb_hints = query_kb_for_tech(tech_stack)
+            guidance_summary = generate_guidance_summary(tech_stack, plugin_priorities, kb_hints)
+            import logging
+            logging.info(guidance_summary)
 
             await self._emit(
                 ScanPhase.CRAWLING,
-                f"Crawled {len(endpoints)} endpoints. Tech: {', '.join(tech_stack[:5])}",
+                f"Crawled {len(endpoints)} endpoints. Tech: {', '.join(tech_stack[:5])}. "
+                f"AI prioritized {len(plugin_priorities)} plugins, found {len(kb_hints)} KB matches.",
                 0.20,
             )
 
@@ -106,11 +126,12 @@ class ScanOrchestrator:
                     errors=["No endpoints found during crawl"],
                 )
 
-            # ── Phase 2: Detection ──
-            await self._emit(ScanPhase.SCANNING, "Running vulnerability detection plugins...", 0.25)
+            # ── Phase 2: AI-Guided Detection ──
+            await self._emit(ScanPhase.SCANNING, "Running AI-prioritized vulnerability detection...", 0.25)
 
-            # Select plugins based on request scope
+            # Select and sort plugins by AI-computed priority
             active_plugins = self._select_plugins(request.scan_scope)
+            active_plugins = sort_plugins_by_priority(active_plugins, plugin_priorities)
 
             # Build cookies for httpx session
             cookies = None
@@ -151,17 +172,20 @@ class ScanOrchestrator:
                     progress = 0.25 + (completed / total_work) * 0.45
 
                     if (ep_idx + 1) % 5 == 0 or ep_idx == len(endpoints) - 1:
+                        # Show deduplicated count so it matches the final number
+                        unique_count = len(self._deduplicate_findings(all_findings))
                         await self._emit(
                             ScanPhase.SCANNING,
-                            f"Scanned {ep_idx + 1}/{len(endpoints)} endpoints. Found {len(all_findings)} vulnerabilities.",
+                            f"Scanned {ep_idx + 1}/{len(endpoints)} endpoints. Found {unique_count} vulnerabilities.",
                             progress,
                         )
 
-            # ── Phase 3: Deduplicate ──
+            # ── Phase 3: Deduplicate & AI-Boost ──
             all_findings = self._deduplicate_findings(all_findings)
+            all_findings = boost_findings_from_kb(all_findings, kb_hints, plugin_priorities)
             await self._emit(
                 ScanPhase.SCANNING,
-                f"Detection complete: {len(all_findings)} unique vulnerabilities found.",
+                f"Detection complete: {len(all_findings)} unique vulnerabilities (AI-boosted from KB).",
                 0.72,
             )
 
@@ -179,8 +203,10 @@ class ScanOrchestrator:
                     import logging
                     logging.warning(f"KB chain search failed (non-fatal): {e}")
 
-                # Cap findings for chain engine to prevent O(n^2) explosion
-                chain_findings = all_findings[:80]
+                # Cap findings for chain engine — sort by severity first
+                sev_order = {SeverityLevel.CRITICAL: 0, SeverityLevel.HIGH: 1, SeverityLevel.MEDIUM: 2, SeverityLevel.LOW: 3, SeverityLevel.INFO: 4}
+                sorted_findings = sorted(all_findings, key=lambda f: (sev_order.get(f.severity, 5), -(f.cvss_score or 0)))
+                chain_findings = sorted_findings[:100]
                 try:
                     engine = ChainEngine()
                     all_chains = await asyncio.wait_for(
@@ -209,24 +235,91 @@ class ScanOrchestrator:
                 )
 
             # ── Phase 5: AI Triage & Remediation ──
-            await self._emit(ScanPhase.AI_ANALYSIS, "Running AI triage and remediation...", 0.87)
+            await self._emit(ScanPhase.AI_ANALYSIS, "Checking AI engine availability...", 0.87)
 
-            # Triage top findings
+            import logging as _log
+
+            # Check if Ollama is available with a model
+            ollama_ready = await check_ollama_available()
+            ai_mode = "llm" if ollama_ready else "chain_fallback"
+            _log.info(f"[AI] Ollama ready: {ollama_ready} → triage mode: {ai_mode}")
+
             high_findings = [f for f in all_findings if f.severity in (SeverityLevel.HIGH, SeverityLevel.CRITICAL)]
-            for finding in high_findings[:10]:
-                try:
-                    remediation = await get_remediation(
-                        vuln_type=finding.vuln_type.value,
-                        url=finding.url,
-                        parameter=finding.parameter or "",
-                        evidence=finding.evidence or "",
-                        severity=finding.severity.value,
-                    )
-                    finding.remediation = remediation
-                except Exception:
-                    finding.remediation = f"Fix {finding.vuln_type.value}: Apply input validation, output encoding, and least privilege."
+            triage_targets = high_findings[:24]
 
-            await self._emit(ScanPhase.AI_ANALYSIS, "AI analysis complete.", 0.95)
+            if ai_mode == "llm" and triage_targets:
+                # ── PRIMARY: LLM-based triage ──
+                await self._emit(ScanPhase.AI_ANALYSIS, "Running LLM-based AI confidence triage...", 0.88)
+                try:
+                    triage_results = await asyncio.wait_for(
+                        ai_triage_batch(triage_targets, batch_size=8),
+                        timeout=90.0,
+                    )
+                    all_findings = apply_triage_to_findings(all_findings, triage_results)
+                    tp = sum(1 for r in triage_results if r["verdict"] == "true_positive")
+                    fp = sum(1 for r in triage_results if r["verdict"] == "false_positive")
+                    await self._emit(
+                        ScanPhase.AI_ANALYSIS,
+                        f"LLM triage: {tp} confirmed, {fp} false positives from {len(triage_targets)} findings.",
+                        0.91,
+                    )
+                    _log.info(f"[AI] LLM triage success: {tp} TP, {fp} FP out of {len(triage_targets)}")
+                except (asyncio.TimeoutError, Exception) as e:
+                    _log.warning(f"[AI] LLM triage failed ({e}), falling back to chain-based triage")
+                    await self._emit(
+                        ScanPhase.AI_ANALYSIS,
+                        "LLM triage failed — switching to chain-based fallback...",
+                        0.89,
+                    )
+                    # Fallback to chain-based
+                    all_findings = chain_based_fallback_triage(all_findings, all_chains)
+                    tp = sum(1 for f in all_findings if f.ai_verdict == "true_positive")
+                    fp = sum(1 for f in all_findings if f.ai_verdict == "false_positive")
+                    await self._emit(
+                        ScanPhase.AI_ANALYSIS,
+                        f"Chain fallback triage: {tp} confirmed, {fp} deprioritized from {len(all_findings)} findings.",
+                        0.91,
+                    )
+            else:
+                # ── FALLBACK: Chain-based triage ──
+                if not ollama_ready:
+                    await self._emit(
+                        ScanPhase.AI_ANALYSIS,
+                        "Ollama unavailable — using chain-based attack analysis for triage...",
+                        0.88,
+                    )
+                    _log.info("[AI] Using chain-based fallback triage (no LLM available)")
+                all_findings = chain_based_fallback_triage(all_findings, all_chains)
+                tp = sum(1 for f in all_findings if f.ai_verdict == "true_positive")
+                fp = sum(1 for f in all_findings if f.ai_verdict == "false_positive")
+                await self._emit(
+                    ScanPhase.AI_ANALYSIS,
+                    f"Chain-based triage: {tp} confirmed, {fp} deprioritized from {len(all_findings)} findings.",
+                    0.91,
+                )
+
+            # AI Remediation — builtin for ALL findings (instant), LLM enrichment for top 10
+            # First: set builtin remediation on every finding so clicks are instant
+            for finding in all_findings:
+                finding.remediation = self._builtin_remediation(finding)
+
+            # Then: overwrite top findings with richer LLM remediation if Ollama is available
+            if ollama_ready:
+                await self._emit(ScanPhase.AI_ANALYSIS, "Generating AI remediation guidance for top findings...", 0.92)
+                for finding in high_findings[:10]:
+                    try:
+                        remediation = await get_remediation(
+                            vuln_type=finding.vuln_type.value,
+                            url=finding.url,
+                            parameter=finding.parameter or "",
+                            evidence=finding.evidence or "",
+                            severity=finding.severity.value,
+                        )
+                        finding.remediation = remediation
+                    except Exception:
+                        pass  # Keep builtin remediation already set
+
+            await self._emit(ScanPhase.AI_ANALYSIS, f"AI analysis complete (mode: {ai_mode}).", 0.95)
 
             # ── Phase 6: Store Results ──
             await self._emit(ScanPhase.COMPLETE, "Scan complete!", 1.0)
@@ -294,3 +387,21 @@ class ScanOrchestrator:
                 seen.add(key)
                 unique.append(f)
         return unique
+
+    def _builtin_remediation(self, finding: Finding) -> str:
+        """Built-in remediation when LLM is unavailable."""
+        remediation_map = {
+            "SQLi": "**SQL Injection**: Use parameterized queries / prepared statements. Never concatenate user input into SQL. Apply ORM-level query builders. Deploy WAF rules for SQL injection patterns.",
+            "XSS": "**Cross-Site Scripting**: Encode all output (HTML entity encoding). Use Content-Security-Policy headers. Sanitize input with allowlists. Use framework auto-escaping (React JSX, Jinja2 |e).",
+            "SSTI": "**Server-Side Template Injection**: Never pass user input directly to template engines. Use sandboxed template rendering. Upgrade to latest template engine version. Restrict template builtins.",
+            "CSTI": "**Client-Side Template Injection**: Avoid interpolating user input in Angular/Vue templates. Use textContent instead of innerHTML. Enable strict CSP. Sanitize with DOMPurify.",
+            "RCE": "**Remote Code Execution**: Never pass user input to system commands. Use language-level APIs instead of shell exec. Apply strict input validation. Run with minimal OS privileges.",
+            "BOLA": "**Broken Object Level Authorization**: Implement object-level access control checks. Verify resource ownership on every API call. Use indirect object references (UUIDs). Log access attempts.",
+            "BAC": "**Broken Access Control**: Enforce role-based access at both API and data layer. Deny by default. Validate permissions server-side. Implement proper session management.",
+            "Auth_Bypass": "**Authentication Bypass**: Enforce auth on all protected endpoints. Use proven auth frameworks. Implement MFA. Validate session tokens server-side.",
+            "Misconfig": "**Security Misconfiguration**: Remove default credentials and debug endpoints. Set secure HTTP headers (HSTS, X-Frame-Options, CSP). Disable directory listing. Review server configuration.",
+            "CORS": "**CORS Misconfiguration**: Restrict Access-Control-Allow-Origin to specific trusted domains. Never use wildcard (*) with credentials. Validate Origin header server-side.",
+            "OAST": "**Out-of-Band Interaction**: Review and restrict external network calls. Implement SSRF protections. Use allowlists for outbound requests. Monitor DNS and HTTP callbacks.",
+        }
+        vuln_key = finding.vuln_type.value
+        return remediation_map.get(vuln_key, f"Fix {vuln_key}: Apply input validation, output encoding, and least privilege principles.")

@@ -51,13 +51,14 @@ export default function FindingsTable() {
       {/* Table */}
       <div className="glass-card overflow-hidden">
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-[#0d0f12]/95 backdrop-blur-sm">
             <tr className="border-b border-white/[0.04]">
               <th className="text-left py-3 px-4 text-[11px] text-white/25 uppercase tracking-wider font-medium">Severity</th>
               <th className="text-left py-3 px-4 text-[11px] text-white/25 uppercase tracking-wider font-medium">Type</th>
               <th className="text-left py-3 px-4 text-[11px] text-white/25 uppercase tracking-wider font-medium">URL</th>
               <th className="text-left py-3 px-4 text-[11px] text-white/25 uppercase tracking-wider font-medium">Parameter</th>
               <th className="text-left py-3 px-4 text-[11px] text-white/25 uppercase tracking-wider font-medium">CVSS</th>
+              <th className="text-left py-3 px-4 text-[11px] text-white/25 uppercase tracking-wider font-medium">AI Conf.</th>
               <th className="text-left py-3 px-4 text-[11px] text-white/25 uppercase tracking-wider font-medium">Chains</th>
               <th className="py-3 px-4 w-8"></th>
             </tr>
@@ -102,6 +103,29 @@ export default function FindingsTable() {
                     }`}>
                       {f.cvss_score?.toFixed(1) || '—'}
                     </span>
+                  </td>
+                  <td className="py-3 px-4">
+                    {f.ai_confidence != null ? (
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-12 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${
+                              f.ai_verdict === 'true_positive' ? 'bg-green-500/70' :
+                              f.ai_verdict === 'false_positive' ? 'bg-red-400/70' :
+                              'bg-yellow-500/70'
+                            }`}
+                            style={{ width: `${(f.ai_confidence * 100).toFixed(0)}%` }}
+                          />
+                        </div>
+                        <span className={`mono text-[10px] ${
+                          f.ai_verdict === 'true_positive' ? 'text-green-400/80' :
+                          f.ai_verdict === 'false_positive' ? 'text-red-400/80' :
+                          'text-yellow-400/80'
+                        }`}>
+                          {(f.ai_confidence * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                    ) : <span className="text-white/15 text-[11px]">—</span>}
                   </td>
                   <td className="py-3 px-4 text-[11px]">
                     {f.chain_ids?.length ? (

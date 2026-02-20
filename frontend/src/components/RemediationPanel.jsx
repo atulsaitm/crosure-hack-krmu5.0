@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useStore } from '../store';
 import { getRemediation } from '../api';
 import { X, Sparkles, Loader2, ExternalLink, ShieldAlert, Tag, Globe, Code, FileWarning } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 
 export default function RemediationPanel() {
   const finding = useStore((s) => s.selectedFinding);
@@ -28,7 +29,7 @@ export default function RemediationPanel() {
   if (!finding) return null;
 
   return (
-    <div className="p-5 h-full flex flex-col glass">
+    <div className="p-5 flex flex-col glass">
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <h3 className="text-sm font-semibold text-white/80 flex items-center gap-2">
@@ -82,7 +83,7 @@ export default function RemediationPanel() {
       <div className="warm-divider mb-4" />
 
       {/* AI Remediation */}
-      <div className="flex-1 glass-card p-4 overflow-auto">
+      <div className="glass-card p-4">
         <h4 className="text-[13px] font-medium text-white/70 flex items-center gap-2 mb-3">
           <Sparkles className="w-4 h-4 text-accent-warm/60" />
           AI Remediation
@@ -93,10 +94,19 @@ export default function RemediationPanel() {
             <Loader2 className="w-4 h-4 animate-spin text-accent-warm/50" />
             Generating remediation...
           </div>
-        ) : (
-          <div className="text-[12px] text-white/50 whitespace-pre-wrap leading-relaxed">
-            {remediationText || 'Click a finding to get AI-powered remediation.'}
+        ) : remediationText ? (
+          <div className="prose prose-invert prose-sm max-w-none
+            prose-headings:text-white/80 prose-headings:text-[13px] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1.5
+            prose-p:text-white/50 prose-p:text-[12px] prose-p:leading-relaxed prose-p:my-1
+            prose-li:text-white/50 prose-li:text-[12px] prose-li:my-0.5
+            prose-strong:text-accent-warm/80
+            prose-code:text-accent-warm/70 prose-code:bg-black/30 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px]
+            prose-pre:bg-black/40 prose-pre:border prose-pre:border-white/[0.06] prose-pre:rounded-lg prose-pre:text-[11px] prose-pre:p-3
+            prose-a:text-accent-warm/70 prose-a:no-underline hover:prose-a:text-accent-warm">
+            <ReactMarkdown>{remediationText}</ReactMarkdown>
           </div>
+        ) : (
+          <p className="text-[12px] text-white/30">Click a finding to get AI-powered remediation.</p>
         )}
       </div>
     </div>

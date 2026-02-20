@@ -28,6 +28,11 @@ export const useStore = create((set, get) => ({
   remediationText: '',
   remediationLoading: false,
 
+  // ── Graph sidebar ──
+  graphSidebarOpen: false,
+  setGraphSidebarOpen: (v) => set({ graphSidebarOpen: v }),
+  toggleGraphSidebar: () => set((s) => ({ graphSidebarOpen: !s.graphSidebarOpen })),
+
   // ── KB ──
   exploits: [],
   kbChains: [],

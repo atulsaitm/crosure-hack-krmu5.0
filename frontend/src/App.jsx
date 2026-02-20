@@ -21,9 +21,9 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0c] flex flex-col">
+    <div className="h-screen bg-[#0a0a0c] flex flex-col overflow-hidden">
       <Header />
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-hidden relative">
         {activeTab === 'scan' && <ScanTab />}
         {activeTab === 'graph' && <ChainGraphTab />}
         {activeTab === 'kb' && <KnowledgeBaseTab />}
